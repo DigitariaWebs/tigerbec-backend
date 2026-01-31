@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: tigerbec-backend
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_VERSION
+        value: 22.11.0 # Using a recent LTS/stable version compatible with v22
