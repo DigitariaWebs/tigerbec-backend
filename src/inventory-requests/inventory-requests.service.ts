@@ -2,6 +2,7 @@ import { Injectable, Inject, NotFoundException, BadRequestException, ForbiddenEx
 import { SupabaseClient } from '@supabase/supabase-js';
 import { CreateInventoryRequestDto, ReviewInventoryRequestDto, InventoryRequestFilters } from './dto/inventory-request.dto';
 import { LogsService } from '../logs/logs.service';
+import { CarStatus } from '../types';
 
 export interface InventoryRequest {
   id: string;
@@ -31,7 +32,7 @@ export class InventoryRequestsService {
     @Inject('SUPABASE_CLIENT') private readonly supabase: SupabaseClient,
     @Inject('SUPABASE_SERVICE_CLIENT') private readonly supabaseService: SupabaseClient,
     private readonly logsService: LogsService,
-  ) {}
+  ) { }
 
   /**
    * Member creates a new inventory request
@@ -231,6 +232,56 @@ export class InventoryRequestsService {
 
     if (error) {
       throw new BadRequestException('Failed to update request: ' + error.message);
+    }
+
+    // If approved, create the car in the inventory
+    if (dto.status === 'approved') {
+      try {
+        // Check if VIN already exists (double check)
+        const { data: existingCar } = await this.supabaseService
+          .from('cars')
+          .select('id')
+          .eq('member_id', request.member_id)
+          .eq('vin', request.vin)
+          .maybeSingle();
+
+        if (!existingCar) {
+          const { error: carError } = await this.supabaseService
+            .from('cars')
+            .insert({
+              member_id: request.member_id,
+              vin: request.vin,
+              make: request.make,
+              model: request.model,
+              year: request.year,
+              purchase_price: request.purchase_price,
+              purchase_date: request.purchase_date || new Date().toISOString().split('T')[0],
+              status: CarStatus.IN_STOCK,
+              // Link back to request if we add a column for it, otherwise just a standalone car
+            });
+
+          if (carError) {
+            console.error('Failed to create car from approved request:', carError);
+            // We don't rollback the approval here, but we should probably alert or log error
+          } else {
+            await this.logsService.createLog({
+              user_id: null,
+              user_email: admin.email,
+              user_role: 'admin',
+              activity_type: 'car_created_from_request',
+              resource_type: 'car',
+              status: 'success',
+              metadata: {
+                request_id: requestId,
+                member_id: request.member_id,
+                vin: request.vin
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Error creating car from request:', e);
+      }
     }
 
     // Get member email for logging

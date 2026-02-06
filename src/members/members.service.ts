@@ -5,8 +5,9 @@ import * as bcrypt from 'bcryptjs';
 import { UpdateMemberDto, QueryMembersDto, MemberResetPasswordDto } from './dto/member.dto';
 import { AdminAddFundsDto } from './dto/admin-add-funds.dto';
 import { AdminAddCarDto } from './dto/admin-add-car.dto';
-import { Member, CarStatus } from '../types';
+import { Member, CarStatus, Car } from '../types';
 import { LogsService } from '../logs/logs.service';
+import { UpdateCarDto } from '../cars/dto/car.dto';
 
 @Injectable()
 export class MembersService {
@@ -580,6 +581,39 @@ export class MembersService {
 
     const profitRatio = totalInvested > 0 ? (totalProfit / totalInvested) * 100 : 0;
 
+
+
+    // Calculate Wallet Balance
+    // Balance = (Total Approved Funds) + (Total Car Sales Revenue) - (Total Car Purchases Costs)
+    // Note: This is a simplified "Cash" balance.
+
+    // 1. Get Total Approved Funds
+    const { data: approvedFunds } = await this.supabase
+      .from('fund_requests')
+      .select('amount')
+      .eq('member_id', memberId)
+      .eq('status', 'approved');
+
+    const totalFundsAdded = (approvedFunds || []).reduce(
+      (sum, req) => sum + parseFloat(req.amount || '0'),
+      0
+    );
+
+    // 2. Get Total Sales Revenue (Sold Price)
+    const totalSalesRevenue = (sales || []).reduce(
+      (sum, sale) => sum + parseFloat(sale.sold_price || '0'),
+      0
+    );
+
+    // 3. Get Total Purchase Cost (All cars ever bought)
+    // We already have 'cars' fetched above.
+    const totalPurchaseCost = cars.reduce(
+      (sum, car) => sum + parseFloat(car.purchase_price || '0'),
+      0
+    );
+
+    const walletBalance = totalFundsAdded + totalSalesRevenue - totalPurchaseCost;
+
     return {
       member,
       total_cars: cars.length,
@@ -587,6 +621,17 @@ export class MembersService {
       total_invested: totalInvested.toFixed(2),
       total_profit: totalProfit.toFixed(2),
       profit_ratio: parseFloat(profitRatio.toFixed(2)),
+      wallet_balance: parseFloat(walletBalance.toFixed(2)),
+      financial: {
+        totalInvestment: totalInvested,
+        totalRevenue: totalSalesRevenue,
+        totalGrossProfit: (sales || []).reduce((sum, s) => sum + (parseFloat(s.profit || '0')), 0),
+        totalNetProfit: (sales || []).reduce((sum, s) => sum + (parseFloat(s.net_profit || '0')), 0),
+        totalFranchiseFees: (sales || []).reduce((sum, s) => sum + (parseFloat(s.franchise_fee_amount || '0')), 0),
+        totalAdditionalExpenses: (sales || []).reduce((sum, s) => sum + (parseFloat(s.additional_expenses_snapshot || '0')), 0),
+        profitMargin: totalSalesRevenue > 0 ? (totalProfit / totalSalesRevenue) * 100 : 0,
+        netProfitMargin: totalSalesRevenue > 0 ? ((sales || []).reduce((sum, s) => sum + parseFloat(s.net_profit || '0'), 0) / totalSalesRevenue) * 100 : 0,
+      }
     };
   }
 
@@ -752,7 +797,6 @@ export class MembersService {
       .insert({
         member_id: memberId,
         amount: dto.amount,
-        // notes: dto.notes ? `[Admin Added] ${dto.notes}` : '[Admin Added]', // Temporarily disabled due to schema cache issue
         status: 'approved',
         reviewed_by: adminId,
         reviewed_at: new Date().toISOString(),
@@ -783,6 +827,111 @@ export class MembersService {
     });
 
     return data;
+  }
+
+  async adminUpdateCar(adminId: string, memberId: string, carId: string, dto: UpdateCarDto): Promise<Car> {
+    // Verify member exists
+    await this.getMemberById(memberId);
+
+    // Verify car exists and belongs to member
+    const { data: car, error: carError } = await this.supabase
+      .from('cars')
+      .select('*')
+      .eq('id', carId)
+      .eq('member_id', memberId)
+      .single();
+
+    if (carError || !car) {
+      throw new NotFoundException('Car not found for this member');
+    }
+
+    // Update car
+    const { data: updatedCar, error: updateError } = await this.supabase
+      .from('cars')
+      .update({
+        ...dto,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', carId)
+      .select()
+      .single();
+
+    if (updateError) {
+      throw new BadRequestException('Failed to update car: ' + updateError.message);
+    }
+
+    // Get admin info for logging
+    const { data: admin } = await this.supabase
+      .from('admins')
+      .select('email')
+      .eq('user_id', adminId)
+      .single();
+
+    // Log update
+    await this.logsService.createLog({
+      user_id: null,
+      user_email: admin?.email || 'admin',
+      user_role: 'admin',
+      activity_type: 'car_updated_by_admin',
+      resource_type: 'car',
+      resource_id: carId,
+      status: 'success',
+      metadata: {
+        member_id: memberId,
+        updates: dto
+      }
+    });
+
+    return updatedCar;
+  }
+
+  async adminDeleteCar(adminId: string, memberId: string, carId: string): Promise<void> {
+    // Verify member exists
+    await this.getMemberById(memberId);
+
+    // Verify car exists and belongs to member
+    const { data: car, error: carError } = await this.supabase
+      .from('cars')
+      .select('*')
+      .eq('id', carId)
+      .eq('member_id', memberId)
+      .single();
+
+    if (carError || !car) {
+      throw new NotFoundException('Car not found for this member');
+    }
+
+    // Delete car
+    const { error: deleteError } = await this.supabase
+      .from('cars')
+      .delete()
+      .eq('id', carId);
+
+    if (deleteError) {
+      throw new BadRequestException('Failed to delete car: ' + deleteError.message);
+    }
+
+    // Get admin info for logging
+    const { data: admin } = await this.supabase
+      .from('admins')
+      .select('email')
+      .eq('user_id', adminId)
+      .single();
+
+    // Log deletion
+    await this.logsService.createLog({
+      user_id: null,
+      user_email: admin?.email || 'admin',
+      user_role: 'admin',
+      activity_type: 'car_deleted_by_admin',
+      resource_type: 'car',
+      resource_id: carId,
+      status: 'success',
+      metadata: {
+        member_id: memberId,
+        vin: car.vin
+      }
+    });
   }
 
   /**
@@ -826,7 +975,6 @@ export class MembersService {
         year: dto.year,
         purchase_price: dto.purchase_price,
         purchase_date: dto.purchase_date,
-        // notes: dto.notes ? `[Admin Added] ${dto.notes}` : '[Admin Added]', // Temporarily disabled due to schema cache issue
         status: CarStatus.IN_STOCK,
       })
       .select()

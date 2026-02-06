@@ -9,6 +9,7 @@ import { UserRole } from '../types';
 import { UpdateMemberDto, OAuthSigninDto, CreateMemberDto, QueryMembersDto, MemberResetPasswordDto, MemberSignupDto, MemberSigninDto, AdminResetMemberPasswordDto } from './dto/member.dto';
 import { AdminAddFundsDto } from './dto/admin-add-funds.dto';
 import { AdminAddCarDto } from './dto/admin-add-car.dto';
+import { UpdateCarDto } from '../cars/dto/car.dto';
 
 @Controller('members')
 export class MembersController {
@@ -188,5 +189,30 @@ export class MembersController {
     @Body() dto: AdminAddCarDto,
   ) {
     return this.membersService.adminAddCar(user.id, memberId, dto);
+  }
+
+  // Admin updates a member's car
+  @Patch(':id/cars/:carId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminUpdateCar(
+    @CurrentUser() user: CurrentUserData,
+    @Param('id') memberId: string,
+    @Param('carId') carId: string,
+    @Body() dto: UpdateCarDto,
+  ) {
+    return this.membersService.adminUpdateCar(user.id, memberId, carId, dto);
+  }
+
+  // Admin deletes a member's car
+  @Delete(':id/cars/:carId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminDeleteCar(
+    @CurrentUser() user: CurrentUserData,
+    @Param('id') memberId: string,
+    @Param('carId') carId: string,
+  ) {
+    return this.membersService.adminDeleteCar(user.id, memberId, carId);
   }
 }
