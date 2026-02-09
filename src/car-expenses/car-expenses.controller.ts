@@ -24,12 +24,12 @@ export class CarExpensesController {
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.MEMBER)
+  @Roles(UserRole.MEMBER, UserRole.ADMIN)
   async create(
     @CurrentUser() user: CurrentUserData,
     @Body() createDto: CreateCarExpenseDto,
   ) {
-    return this.carExpensesService.create(user.id, createDto);
+    return this.carExpensesService.create(user.id, user.role, createDto);
   }
 
   @Get('car/:carId')
@@ -64,22 +64,22 @@ export class CarExpensesController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.MEMBER)
+  @Roles(UserRole.MEMBER, UserRole.ADMIN)
   async update(
     @CurrentUser() user: CurrentUserData,
     @Param('id') id: string,
     @Body() updateDto: UpdateCarExpenseDto,
   ) {
-    return this.carExpensesService.update(id, user.id, updateDto);
+    return this.carExpensesService.update(id, user.id, user.role, updateDto);
   }
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.MEMBER)
+  @Roles(UserRole.MEMBER, UserRole.ADMIN)
   async remove(
     @CurrentUser() user: CurrentUserData,
     @Param('id') id: string,
   ) {
-    return this.carExpensesService.remove(id, user.id);
+    return this.carExpensesService.remove(id, user.id, user.role);
   }
 }

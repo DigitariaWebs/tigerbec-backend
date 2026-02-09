@@ -404,4 +404,104 @@ export class AdminService {
 
     return data;
   }
+
+  async deleteProjectData(currentUser: any, password: string) {
+    // Verify admin identity and password before destructive action.
+    const { data: admin, error: adminError } = await this.supabase
+      .from('admins')
+      .select('user_id, email, password')
+      .eq('user_id', currentUser.id)
+      .maybeSingle();
+
+    if (adminError || !admin) {
+      throw new UnauthorizedException('Admin not found');
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, admin.password || '');
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Password is incorrect');
+    }
+
+    // Capture member IDs first so we can remove auth users too (when they exist).
+    const { data: membersData, error: membersFetchError } = await this.supabase
+      .from('members')
+      .select('user_id');
+
+    if (membersFetchError) {
+      throw new BadRequestException('Failed to fetch members for cleanup: ' + membersFetchError.message);
+    }
+
+    const memberIds = (membersData || [])
+      .map((member) => member.user_id)
+      .filter(Boolean);
+
+    const tableOrder: Array<{ table: string; key: 'id' | 'user_id' }> = [
+      { table: 'tasks', key: 'id' },
+      { table: 'car_sales', key: 'id' },
+      { table: 'car_additional_expenses', key: 'id' },
+      { table: 'fund_requests', key: 'id' },
+      { table: 'car_inventory_requests', key: 'id' },
+      { table: 'cars', key: 'id' },
+      { table: 'events', key: 'id' },
+      { table: 'announcements', key: 'id' },
+      { table: 'audit_logs', key: 'id' },
+      { table: 'activity_logs', key: 'id' },
+      { table: 'members', key: 'user_id' },
+    ];
+
+    const deletedCounts: Record<string, number> = {};
+
+    for (const item of tableOrder) {
+      const { count, error } = await this.supabase
+        .from(item.table)
+        .delete({ count: 'exact' })
+        .not(item.key, 'is', null);
+
+      if (error) {
+        // Skip missing relations to remain compatible with older deployments.
+        const errorCode = (error as any).code;
+        const errorMessage = (error as any).message || '';
+        if (
+          errorCode === '42P01' || // postgres undefined_table
+          errorCode === 'PGRST205' || // postgrest table not found in schema cache
+          (typeof errorMessage === 'string' &&
+            errorMessage.includes('Could not find the table'))
+        ) {
+          deletedCounts[item.table] = 0;
+          continue;
+        }
+        throw new BadRequestException(`Failed to clear '${item.table}': ${error.message}`);
+      }
+
+      deletedCounts[item.table] = count || 0;
+    }
+
+    // Best-effort cleanup of auth users that were tied to member IDs.
+    // Ignore "not found" failures to keep the operation resilient.
+    for (const memberId of memberIds) {
+      try {
+        await this.supabase.auth.admin.deleteUser(memberId);
+      } catch (error) {
+        // noop
+      }
+    }
+
+    // Re-create an audit entry after the wipe.
+    await this.logsService.createLog({
+      user_id: currentUser.id,
+      user_email: currentUser.email,
+      user_role: 'admin',
+      activity_type: 'project_data_deleted',
+      resource_type: 'system',
+      status: 'success',
+      metadata: {
+        deleted_counts: deletedCounts,
+      },
+    });
+
+    return {
+      message: 'Project data deleted successfully',
+      deleted_counts: deletedCounts,
+    };
+  }
 }

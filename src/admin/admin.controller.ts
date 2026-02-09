@@ -9,6 +9,7 @@ import { UserRole } from '../types';
 import { AdminSignupDto, AdminSigninDto, ResetPasswordDto } from './dto/admin-auth.dto';
 import { UpdateAdminDto } from './dto/update-admin.dto';
 import { UpdateSettingDto } from './dto/setting.dto';
+import { DeleteProjectDataDto } from './dto/delete-project-data.dto';
 
 @Controller('admin')
 export class AdminController {
@@ -123,5 +124,15 @@ export class AdminController {
     @Request() req: any,
   ) {
     return this.adminService.updateSetting(key, dto.setting_value, req.user);
+  }
+
+  @Post('settings/delete-project-data')
+  @UseGuards(JwtAuthGuard, RolesGuard, SuperAdminGuard)
+  @Roles(UserRole.ADMIN)
+  async deleteProjectData(
+    @Body() dto: DeleteProjectDataDto,
+    @Request() req: any,
+  ) {
+    return this.adminService.deleteProjectData(req.user, dto.password);
   }
 }

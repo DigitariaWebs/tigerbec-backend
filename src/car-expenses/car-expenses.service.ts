@@ -10,24 +10,30 @@ export class CarExpensesService {
     private readonly supabase: SupabaseClient,
   ) {}
 
-  async create(userId: string, createDto: CreateCarExpenseDto) {
-    // Verify the car belongs to the member
-    const { data: car, error: carError } = await this.supabase
+  async create(userId: string, role: string, createDto: CreateCarExpenseDto) {
+    // Verify car access. Members can only add expenses to their own cars.
+    let carQuery = this.supabase
       .from('cars')
       .select('id, member_id')
-      .eq('id', createDto.car_id)
-      .eq('member_id', userId)
-      .single();
+      .eq('id', createDto.car_id);
+
+    if (role !== 'admin') {
+      carQuery = carQuery.eq('member_id', userId);
+    }
+
+    const { data: car, error: carError } = await carQuery.single();
 
     if (carError || !car) {
       throw new NotFoundException('Car not found or you do not have permission');
     }
 
+    const ownerMemberId = role === 'admin' ? car.member_id : userId;
+
     const { data, error } = await this.supabase
       .from('car_additional_expenses')
       .insert({
         car_id: createDto.car_id,
-        member_id: userId,
+        member_id: ownerMemberId,
         amount: createDto.amount,
         description: createDto.description,
         expense_date: createDto.expense_date || new Date().toISOString().split('T')[0],
@@ -109,15 +115,19 @@ export class CarExpensesService {
     return data;
   }
 
-  async update(id: string, userId: string, updateDto: UpdateCarExpenseDto) {
-    // Verify ownership
+  async update(id: string, userId: string, role: string, updateDto: UpdateCarExpenseDto) {
+    // Verify ownership for members; admins can update any expense
     const { data: existing } = await this.supabase
       .from('car_additional_expenses')
       .select('member_id')
       .eq('id', id)
       .single();
 
-    if (!existing || existing.member_id !== userId) {
+    if (!existing) {
+      throw new NotFoundException('Expense not found');
+    }
+
+    if (role !== 'admin' && existing.member_id !== userId) {
       throw new ForbiddenException('You do not have permission to update this expense');
     }
 
@@ -135,15 +145,19 @@ export class CarExpensesService {
     return data;
   }
 
-  async remove(id: string, userId: string) {
-    // Verify ownership
+  async remove(id: string, userId: string, role: string) {
+    // Verify ownership for members; admins can delete any expense
     const { data: existing } = await this.supabase
       .from('car_additional_expenses')
       .select('member_id')
       .eq('id', id)
       .single();
 
-    if (!existing || existing.member_id !== userId) {
+    if (!existing) {
+      throw new NotFoundException('Expense not found');
+    }
+
+    if (role !== 'admin' && existing.member_id !== userId) {
       throw new ForbiddenException('You do not have permission to delete this expense');
     }
 
