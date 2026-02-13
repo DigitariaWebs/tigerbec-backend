@@ -62,6 +62,7 @@ export class CarsController {
   }
 
   @Post(':id/mark-sold')
+  @Roles(UserRole.ADMIN)
   async markAsSold(
     @CurrentUser() user: CurrentUserData,
     @Param('id') carId: string,

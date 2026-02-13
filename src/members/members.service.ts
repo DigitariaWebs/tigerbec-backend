@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { UpdateMemberDto, QueryMembersDto, MemberResetPasswordDto } from './dto/member.dto';
 import { AdminAddFundsDto } from './dto/admin-add-funds.dto';
+import { AdminRemoveFundsDto } from './dto/admin-remove-funds.dto';
 import { AdminAddCarDto } from './dto/admin-add-car.dto';
 import { Member, CarStatus, Car } from '../types';
 import { LogsService } from '../logs/logs.service';
@@ -590,12 +591,23 @@ export class MembersService {
     // 1. Get Total Approved Funds
     const { data: approvedFunds } = await this.supabase
       .from('fund_requests')
-      .select('amount')
+      .select('amount, notes')
       .eq('member_id', memberId)
       .eq('status', 'approved');
 
     const totalFundsAdded = (approvedFunds || []).reduce(
-      (sum, req) => sum + parseFloat(req.amount || '0'),
+      (sum, req: any) => {
+        const amount = parseFloat(req.amount || '0');
+        if (!Number.isFinite(amount)) return sum;
+        const isWithdrawal =
+          typeof req.notes === 'string' &&
+          req.notes.trim().toUpperCase().startsWith('[WITHDRAWAL]');
+        // Support either representation:
+        // 1) negative amounts, or
+        // 2) positive amounts marked with [WITHDRAWAL] in notes.
+        if (amount < 0) return sum + amount;
+        return sum + (isWithdrawal ? -amount : amount);
+      },
       0
     );
 
@@ -773,6 +785,47 @@ export class MembersService {
     return { message: 'Password updated successfully' };
   }
 
+  private async calculateMemberAvailableBalance(memberId: string): Promise<number> {
+    const { data: approvedFunds, error: fundsError } = await this.supabase
+      .from('fund_requests')
+      .select('amount, notes')
+      .eq('member_id', memberId)
+      .eq('status', 'approved');
+
+    if (fundsError) {
+      throw new BadRequestException('Failed to fetch member funds: ' + fundsError.message);
+    }
+
+    const totalFunds = (approvedFunds || []).reduce(
+      (sum, req: any) => {
+        const amount = parseFloat(req.amount || '0');
+        if (!Number.isFinite(amount)) return sum;
+        const isWithdrawal =
+          typeof req.notes === 'string' &&
+          req.notes.trim().toUpperCase().startsWith('[WITHDRAWAL]');
+        if (amount < 0) return sum + amount;
+        return sum + (isWithdrawal ? -amount : amount);
+      },
+      0,
+    );
+
+    const { data: cars, error: carsError } = await this.supabase
+      .from('cars')
+      .select('purchase_price')
+      .eq('member_id', memberId);
+
+    if (carsError) {
+      throw new BadRequestException('Failed to fetch member cars: ' + carsError.message);
+    }
+
+    const totalPurchaseCost = (cars || []).reduce(
+      (sum, car) => sum + parseFloat(car.purchase_price || '0'),
+      0,
+    );
+
+    return Math.max(0, totalFunds - totalPurchaseCost);
+  }
+
   /**
    * Admin directly adds funds to a member (auto-approved)
    */
@@ -800,6 +853,7 @@ export class MembersService {
         status: 'approved',
         reviewed_by: adminId,
         reviewed_at: new Date().toISOString(),
+        notes: dto.notes,
       })
       .select()
       .single();
@@ -827,6 +881,94 @@ export class MembersService {
     });
 
     return data;
+  }
+
+  /**
+   * Admin removes funds from a member account (auto-approved ledger adjustment)
+   */
+  async adminRemoveFunds(adminId: string, memberId: string, dto: AdminRemoveFundsDto) {
+    // Verify member exists
+    const member = await this.getMemberById(memberId);
+
+    // Get admin info
+    const { data: admin, error: adminError } = await this.supabase
+      .from('admins')
+      .select('email')
+      .eq('user_id', adminId)
+      .single();
+
+    if (adminError || !admin) {
+      throw new BadRequestException('Admin not found');
+    }
+
+    const availableBalance = await this.calculateMemberAvailableBalance(memberId);
+    const requestedAmount = Number(dto.amount);
+    if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
+      throw new BadRequestException('Amount must be greater than 0');
+    }
+
+    if (requestedAmount > availableBalance) {
+      throw new BadRequestException(
+        `Insufficient available balance. Available: ${availableBalance.toFixed(2)}`,
+      );
+    }
+
+    // Ledger adjustment without DDL: store approved positive amount marked as a withdrawal.
+    // Some environments have a CHECK constraint that blocks negative amounts.
+    const ledgerAmount = Math.abs(requestedAmount);
+    if (!Number.isFinite(ledgerAmount) || ledgerAmount <= 0) {
+      throw new BadRequestException('Amount must be greater than 0');
+    }
+    const notes = dto.notes?.trim()
+      ? `[WITHDRAWAL] ${dto.notes.trim()}`
+      : '[WITHDRAWAL]';
+    const { data, error } = await this.supabase
+      .from('fund_requests')
+      .insert({
+        member_id: memberId,
+        amount: ledgerAmount,
+        status: 'approved',
+        reviewed_by: adminId,
+        reviewed_at: new Date().toISOString(),
+        notes,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      throw new BadRequestException('Failed to remove funds: ' + error.message);
+    }
+
+    const availableBalanceAfter = parseFloat(
+      Math.max(0, availableBalance - Math.abs(dto.amount)).toFixed(2),
+    );
+
+    await this.logsService.createLog({
+      user_id: null,
+      user_email: admin.email,
+      user_role: 'admin',
+      activity_type: 'admin_fund_removal',
+      resource_type: 'fund_request',
+      resource_id: data.id,
+      status: 'success',
+      metadata: {
+        admin_id: adminId,
+        member_id: memberId,
+        member_email: member.email,
+        amount_removed: dto.amount,
+        ledger_amount: -ledgerAmount,
+        available_balance_before: availableBalance,
+        available_balance_after: availableBalanceAfter,
+        notes,
+      },
+    });
+
+    return {
+      ...data,
+      amount_removed: dto.amount,
+      available_balance_before: availableBalance,
+      available_balance_after: availableBalanceAfter,
+    };
   }
 
   async adminUpdateCar(adminId: string, memberId: string, carId: string, dto: UpdateCarDto): Promise<Car> {

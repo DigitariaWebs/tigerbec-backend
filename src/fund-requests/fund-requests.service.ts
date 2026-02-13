@@ -191,7 +191,7 @@ export class FundRequestsService {
   }
 
   async getStats(userId: string, role: string) {
-    let query = this.supabase.from('fund_requests').select('status, amount');
+    let query = this.supabase.from('fund_requests').select('status, amount, notes');
 
     // If member, only show their own stats
     if (role === 'member') {
@@ -224,13 +224,18 @@ export class FundRequestsService {
     };
 
     data.forEach((request: any) => {
-      stats.total_amount_requested += parseFloat(request.amount);
+      const amount = parseFloat(request.amount);
+      const isWithdrawal =
+        typeof request.notes === 'string' &&
+        request.notes.trim().toUpperCase().startsWith('[WITHDRAWAL]');
+      const signedAmount = amount < 0 ? amount : (isWithdrawal ? -amount : amount);
+      stats.total_amount_requested += signedAmount;
 
       if (request.status === 'pending') {
         stats.pending++;
       } else if (request.status === 'approved') {
         stats.approved++;
-        stats.total_amount_approved += parseFloat(request.amount);
+        stats.total_amount_approved += signedAmount;
       } else if (request.status === 'rejected') {
         stats.rejected++;
       }

@@ -22,6 +22,12 @@ export class CarSalesService {
       throw new NotFoundException(`Car with ID ${car_id} not found`);
     }
 
+    if (car.member_id !== member_id) {
+      throw new BadRequestException(
+        `Car with ID ${car_id} does not belong to member ${member_id}`,
+      );
+    }
+
     // Check if car is already sold
     if (car.status === 'SOLD') {
       throw new BadRequestException(`Car with ID ${car_id} is already sold`);

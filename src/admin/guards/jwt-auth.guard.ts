@@ -37,7 +37,7 @@ export class JwtAuthGuard implements CanActivate {
       const role = payload.role;
 
       // Check if this is an admin user
-      if (role === 'admin') {
+      if (role === 'admin' || role === 'super_admin') {
         const { data: adminProfile, error: adminError } = await this.supabase
           .from('admins')
           .select('*')
@@ -48,7 +48,7 @@ export class JwtAuthGuard implements CanActivate {
           request.user = {
             id: userId,
             email: payload.email,
-            role: 'admin',
+            role,
             profile: adminProfile,
           };
           return true;

@@ -8,6 +8,7 @@ import { CurrentUser, CurrentUserData } from '../admin/decorators/current-user.d
 import { UserRole } from '../types';
 import { UpdateMemberDto, OAuthSigninDto, CreateMemberDto, QueryMembersDto, MemberResetPasswordDto, MemberSignupDto, MemberSigninDto, AdminResetMemberPasswordDto } from './dto/member.dto';
 import { AdminAddFundsDto } from './dto/admin-add-funds.dto';
+import { AdminRemoveFundsDto } from './dto/admin-remove-funds.dto';
 import { AdminAddCarDto } from './dto/admin-add-car.dto';
 import { UpdateCarDto } from '../cars/dto/car.dto';
 
@@ -177,6 +178,18 @@ export class MembersController {
     @Body() dto: AdminAddFundsDto,
   ) {
     return this.membersService.adminAddFunds(user.id, memberId, dto);
+  }
+
+  // Admin removes funds from a member account (auto-approved ledger adjustment)
+  @Post(':id/funds/remove')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  async adminRemoveFunds(
+    @CurrentUser() user: CurrentUserData,
+    @Param('id') memberId: string,
+    @Body() dto: AdminRemoveFundsDto,
+  ) {
+    return this.membersService.adminRemoveFunds(user.id, memberId, dto);
   }
 
   // Admin directly adds a car to a member's inventory

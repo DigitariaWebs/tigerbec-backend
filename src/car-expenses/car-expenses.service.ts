@@ -10,14 +10,19 @@ export class CarExpensesService {
     private readonly supabase: SupabaseClient,
   ) {}
 
+  private isAdminRole(role: string): boolean {
+    return role === 'admin' || role === 'super_admin';
+  }
+
   async create(userId: string, role: string, createDto: CreateCarExpenseDto) {
     // Verify car access. Members can only add expenses to their own cars.
+    const isAdmin = this.isAdminRole(role);
     let carQuery = this.supabase
       .from('cars')
       .select('id, member_id')
       .eq('id', createDto.car_id);
 
-    if (role !== 'admin') {
+    if (!isAdmin) {
       carQuery = carQuery.eq('member_id', userId);
     }
 
@@ -27,7 +32,7 @@ export class CarExpensesService {
       throw new NotFoundException('Car not found or you do not have permission');
     }
 
-    const ownerMemberId = role === 'admin' ? car.member_id : userId;
+    const ownerMemberId = isAdmin ? car.member_id : userId;
 
     const { data, error } = await this.supabase
       .from('car_additional_expenses')
@@ -49,6 +54,7 @@ export class CarExpensesService {
   }
 
   async findAllByCarId(carId: string, userId: string, role: string) {
+    const isAdmin = this.isAdminRole(role);
     let query = this.supabase
       .from('car_additional_expenses')
       .select('*')
@@ -56,7 +62,7 @@ export class CarExpensesService {
       .order('expense_date', { ascending: false });
 
     // If not admin, filter by member_id
-    if (role !== 'admin') {
+    if (!isAdmin) {
       query = query.eq('member_id', userId);
     }
 
@@ -70,13 +76,14 @@ export class CarExpensesService {
   }
 
   async getTotalExpenses(carId: string, userId: string, role: string) {
+    const isAdmin = this.isAdminRole(role);
     // Verify access to car
     let carQuery = this.supabase
       .from('cars')
       .select('id, member_id')
       .eq('id', carId);
 
-    if (role !== 'admin') {
+    if (!isAdmin) {
       carQuery = carQuery.eq('member_id', userId);
     }
 
@@ -97,12 +104,13 @@ export class CarExpensesService {
   }
 
   async findOne(id: string, userId: string, role: string) {
+    const isAdmin = this.isAdminRole(role);
     let query = this.supabase
       .from('car_additional_expenses')
       .select('*')
       .eq('id', id);
 
-    if (role !== 'admin') {
+    if (!isAdmin) {
       query = query.eq('member_id', userId);
     }
 
@@ -116,6 +124,7 @@ export class CarExpensesService {
   }
 
   async update(id: string, userId: string, role: string, updateDto: UpdateCarExpenseDto) {
+    const isAdmin = this.isAdminRole(role);
     // Verify ownership for members; admins can update any expense
     const { data: existing } = await this.supabase
       .from('car_additional_expenses')
@@ -127,7 +136,7 @@ export class CarExpensesService {
       throw new NotFoundException('Expense not found');
     }
 
-    if (role !== 'admin' && existing.member_id !== userId) {
+    if (!isAdmin && existing.member_id !== userId) {
       throw new ForbiddenException('You do not have permission to update this expense');
     }
 
@@ -146,6 +155,7 @@ export class CarExpensesService {
   }
 
   async remove(id: string, userId: string, role: string) {
+    const isAdmin = this.isAdminRole(role);
     // Verify ownership for members; admins can delete any expense
     const { data: existing } = await this.supabase
       .from('car_additional_expenses')
@@ -157,7 +167,7 @@ export class CarExpensesService {
       throw new NotFoundException('Expense not found');
     }
 
-    if (role !== 'admin' && existing.member_id !== userId) {
+    if (!isAdmin && existing.member_id !== userId) {
       throw new ForbiddenException('You do not have permission to delete this expense');
     }
 

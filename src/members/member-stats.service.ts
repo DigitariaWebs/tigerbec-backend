@@ -11,7 +11,9 @@ export class MemberStatsService {
     // Check if member exists
     const { data: member, error: memberError } = await this.supabase
       .from('members')
-      .select('user_id, name, email, balance')
+      // Balance is derived from the fund ledger + inventory state, not the members table.
+      // Avoid selecting a potentially stale/nonexistent `balance` column.
+      .select('user_id, name, email')
       .eq('user_id', memberId)
       .single();
 
@@ -81,7 +83,7 @@ export class MemberStatsService {
     // Get approved fund requests for investment calculation
     const { data: funds, error: fundsError } = await this.supabase
       .from('fund_requests')
-      .select('amount')
+      .select('amount, notes')
       .eq('member_id', memberId)
       .eq('status', 'approved');
 
@@ -89,7 +91,15 @@ export class MemberStatsService {
       console.error('Error fetching fund requests:', fundsError);
     }
 
-    const totalFunds = funds?.reduce((sum, req) => sum + (parseFloat(req.amount?.toString() || '0')), 0) || 0;
+    const totalFunds = funds?.reduce((sum, req: any) => {
+      const amount = parseFloat(req.amount?.toString() || '0');
+      if (!Number.isFinite(amount)) return sum;
+      const isWithdrawal =
+        typeof req.notes === 'string' &&
+        req.notes.trim().toUpperCase().startsWith('[WITHDRAWAL]');
+      if (amount < 0) return sum + amount;
+      return sum + (isWithdrawal ? -amount : amount);
+    }, 0) || 0;
 
     // Calculate total investment: Max of (Total Approved Funds, Total Car Cost)
     // This handles:
@@ -128,13 +138,17 @@ export class MemberStatsService {
       .order('created_at', { ascending: false })
       .limit(5);
 
+    const resolvedBalance = parseFloat(calculatedBalance.toFixed(2));
+
     return {
       member: {
         id: member.user_id,
         name: member.name,
         email: member.email,
       },
-      balance: parseFloat((member.balance || calculatedBalance).toString()),
+      balance: resolvedBalance,
+      // Backward-compat alias used by parts of the admin UI
+      wallet_balance: resolvedBalance,
       cars: {
         total: totalCars,
         inInventory: carsInInventory,

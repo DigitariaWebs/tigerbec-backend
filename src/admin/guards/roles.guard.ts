@@ -1,6 +1,6 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { UserRole } from '../../types';
+import { AdminRole, UserRole } from '../../types';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -23,7 +23,14 @@ export class RolesGuard implements CanActivate {
       throw new ForbiddenException('User role not found');
     }
 
-    const hasRole = requiredRoles.includes(user.role);
+    const userRole = user.role as string;
+    const isSuperAdmin =
+      userRole === AdminRole.SUPER_ADMIN ||
+      user?.profile?.role === AdminRole.SUPER_ADMIN;
+
+    const hasRole =
+      requiredRoles.includes(userRole as UserRole) ||
+      (isSuperAdmin && requiredRoles.includes(UserRole.ADMIN));
 
     if (!hasRole) {
       throw new ForbiddenException('Insufficient permissions');
