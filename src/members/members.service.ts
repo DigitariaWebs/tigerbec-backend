@@ -1027,7 +1027,7 @@ export class MembersService {
     return updatedCar;
   }
 
-  async adminDeleteCar(adminId: string, memberId: string, carId: string): Promise<void> {
+  async adminDeleteCar(adminId: string, memberId: string, carId: string): Promise<{ message: string }> {
     // Verify member exists
     await this.getMemberById(memberId);
 
@@ -1041,6 +1041,30 @@ export class MembersService {
 
     if (carError || !car) {
       throw new NotFoundException('Car not found for this member');
+    }
+
+    // Best-effort cascade: remove dependent rows first to avoid FK violations.
+    // (Some environments may not use ON DELETE CASCADE.)
+    const { error: expensesDeleteError } = await this.supabase
+      .from('car_additional_expenses')
+      .delete()
+      .eq('car_id', carId);
+
+    if (expensesDeleteError) {
+      throw new BadRequestException(
+        'Failed to delete car expenses: ' + expensesDeleteError.message,
+      );
+    }
+
+    const { error: saleDeleteError } = await this.supabase
+      .from('car_sales')
+      .delete()
+      .eq('car_id', carId);
+
+    if (saleDeleteError) {
+      throw new BadRequestException(
+        'Failed to delete car sale record: ' + saleDeleteError.message,
+      );
     }
 
     // Delete car
@@ -1074,6 +1098,8 @@ export class MembersService {
         vin: car.vin
       }
     });
+
+    return { message: 'Car deleted successfully' };
   }
 
   /**

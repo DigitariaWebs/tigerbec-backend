@@ -294,6 +294,30 @@ export class CarsService {
       .eq('user_id', memberId)
       .single();
 
+    // Best-effort cascade: remove dependent rows first to avoid FK violations.
+    // (Some environments may not use ON DELETE CASCADE.)
+    const { error: expensesDeleteError } = await this.supabaseService
+      .from('car_additional_expenses')
+      .delete()
+      .eq('car_id', carId);
+
+    if (expensesDeleteError) {
+      throw new BadRequestException(
+        'Failed to delete car expenses: ' + expensesDeleteError.message,
+      );
+    }
+
+    const { error: saleDeleteError } = await this.supabaseService
+      .from('car_sales')
+      .delete()
+      .eq('car_id', carId);
+
+    if (saleDeleteError) {
+      throw new BadRequestException(
+        'Failed to delete car sale record: ' + saleDeleteError.message,
+      );
+    }
+
     const { error } = await this.supabaseService
       .from('cars')
       .delete()
